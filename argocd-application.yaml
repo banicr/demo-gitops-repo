@@ -1,0 +1,59 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo-flask-app
+  namespace: argocd
+  # Finalizer to ensure proper cleanup
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # The project this application belongs to
+  project: default
+  
+  # Source repository configuration
+  source:
+    # GitOps repository URL
+    repoURL: https://github.com/banicr/demo-gitops-repo.git
+    targetRevision: main
+    path: k8s/base
+  
+  # Destination cluster and namespace
+  destination:
+    # 'in-cluster' means the same cluster where ArgoCD is installed
+    server: https://kubernetes.default.svc
+    namespace: demo-app
+  
+  # Sync policy configuration
+  syncPolicy:
+    # Automated sync: ArgoCD will automatically sync when it detects changes
+    automated:
+      # Prune resources that are no longer defined in Git
+      prune: true
+      # Allow apps to self-heal if manual changes are made to the cluster
+      selfHeal: true
+      # Allow empty resources (useful during initial setup)
+      allowEmpty: false
+    
+    # Sync options
+    syncOptions:
+      # Create namespace if it doesn't exist
+      - CreateNamespace=true
+      # Validate resources before applying
+      - Validate=true
+      # Use server-side apply
+      - ServerSideApply=false
+    
+    # Retry configuration for failed syncs
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  
+  # Ignore certain differences that shouldn't trigger sync
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas  # Ignore replica changes made by HPA
