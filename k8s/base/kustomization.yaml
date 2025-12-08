@@ -11,7 +11,7 @@ resources:
 # Images will be updated by CI pipeline using 'kustomize edit set image'
 images:
   - name: demo-flask-app
-    newName: banicr/demo-flask-app
+    newName: ghcr.io/banicr/demo-flask-app
     newTag: latest
 
 # Common labels applied to all resources
