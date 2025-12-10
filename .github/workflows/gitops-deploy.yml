@@ -72,16 +72,21 @@ jobs:
           echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
           echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_ENV
 
-      - name: Login to GHCR
-        run: |
-          echo "🔐 Logging into GHCR..."
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-      - name: Pull image from GHCR
+      - name: Pull image from GHCR (public)
         run: |
           echo "📥 Pulling image: ${{ env.DOCKER_IMAGE }}:${{ steps.image_tag.outputs.image_tag }}"
-          docker pull ${{ env.DOCKER_IMAGE }}:${{ steps.image_tag.outputs.image_tag }}
-          echo "✅ Image pulled successfully"
+          echo "Note: Image must be public in GHCR for cross-repo access"
+          
+          # Try without authentication first (for public images)
+          if docker pull ${{ env.DOCKER_IMAGE }}:${{ steps.image_tag.outputs.image_tag }} 2>/dev/null; then
+            echo "✅ Image pulled successfully (public)"
+          else
+            echo "⚠️ Failed to pull as public, trying with authentication..."
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker pull ${{ env.DOCKER_IMAGE }}:${{ steps.image_tag.outputs.image_tag }}
+            echo "✅ Image pulled successfully (authenticated)"
+          fi
+          
           docker images | grep demo-flask-app
 
       - name: Load image into kind cluster
