@@ -1,0 +1,223 @@
+name: GitOps - Deploy to Kind Cluster
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  DOCKER_IMAGE: ghcr.io/banicr/demo-flask-app
+  CLUSTER_NAME: gitops-test-cluster
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  deploy-with-argocd:
+    name: Deploy with ArgoCD on Kind
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v4
+
+      - name: Install kind
+        run: |
+          echo "📦 Installing kind..."
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+
+      - name: Install kubectl
+        run: |
+          echo "📦 Installing kubectl..."
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+          kubectl version --client
+
+      - name: Create kind cluster
+        run: |
+          echo "🚀 Creating kind cluster..."
+          kind create cluster --name ${{ env.CLUSTER_NAME }} --wait 5m
+          kubectl cluster-info --context kind-${{ env.CLUSTER_NAME }}
+          kubectl get nodes
+
+      - name: Login to GHCR
+        run: |
+          echo "🔐 Logging into GHCR..."
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Pull latest image
+        run: |
+          echo "📥 Pulling latest image from app-repo..."
+          docker pull ${{ env.DOCKER_IMAGE }}:latest
+          echo "Image pulled successfully"
+          docker images | grep demo-flask-app
+
+      - name: Load image into kind cluster
+        run: |
+          echo "📦 Loading image into kind cluster..."
+          kind load docker-image ${{ env.DOCKER_IMAGE }}:latest --name ${{ env.CLUSTER_NAME }}
+
+      - name: Install ArgoCD
+        run: |
+          echo "🎯 Installing ArgoCD..."
+          kubectl create namespace argocd
+          kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+          
+          echo "⏳ Waiting for ArgoCD to be ready..."
+          kubectl wait --for=condition=available --timeout=300s \
+            deployment/argocd-server -n argocd
+          
+          kubectl wait --for=condition=available --timeout=300s \
+            deployment/argocd-repo-server -n argocd
+          
+          kubectl wait --for=condition=available --timeout=300s \
+            deployment/argocd-applicationset-controller -n argocd
+          
+          echo "✅ ArgoCD installed successfully"
+
+      - name: Configure ArgoCD
+        run: |
+          echo "⚙️ Configuring ArgoCD..."
+          
+          # Get ArgoCD admin password
+          ARGOCD_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret \
+            -o jsonpath="{.data.password}" | base64 -d)
+          
+          echo "ArgoCD admin password: $ARGOCD_PASSWORD"
+          
+          # Port forward ArgoCD server in background
+          kubectl port-forward svc/argocd-server -n argocd 8080:443 > /dev/null 2>&1 &
+          ARGOCD_PF_PID=$!
+          sleep 10
+          
+          # Install ArgoCD CLI
+          curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+          sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
+          rm argocd-linux-amd64
+          
+          # Login to ArgoCD
+          argocd login localhost:8080 --username admin --password "$ARGOCD_PASSWORD" --insecure
+          
+          echo "✅ ArgoCD configured"
+          
+          # Cleanup port forward
+          kill $ARGOCD_PF_PID || true
+
+      - name: Deploy ArgoCD Application
+        run: |
+          echo "🚀 Deploying ArgoCD Application..."
+          
+          # Create demo-app namespace
+          kubectl create namespace demo-app || true
+          
+          # Apply ArgoCD Application manifest
+          kubectl apply -f argocd-application.yaml
+          
+          echo "⏳ Waiting for ArgoCD to sync application..."
+          sleep 30
+          
+          # Check application status
+          kubectl get applications -n argocd
+          
+          echo "✅ ArgoCD Application deployed"
+
+      - name: Wait for application deployment
+        run: |
+          echo "⏳ Waiting for demo-flask-app deployment..."
+          
+          # Wait for deployment to be available
+          kubectl wait --for=condition=available --timeout=300s \
+            deployment/demo-flask-app -n demo-app || true
+          
+          # Show deployment status
+          echo "📊 Deployment status:"
+          kubectl get all -n demo-app
+          
+          echo "📋 Pod details:"
+          kubectl describe pods -n demo-app -l app=demo-flask-app || true
+
+      - name: Test deployed application
+        run: |
+          echo "🧪 Testing deployed application..."
+          
+          # Port forward application service
+          kubectl port-forward -n demo-app service/demo-flask-app 8081:80 > /dev/null 2>&1 &
+          APP_PF_PID=$!
+          sleep 5
+          
+          # Test health endpoint
+          echo "Testing /healthz endpoint..."
+          HEALTH_RESPONSE=$(curl -s http://localhost:8081/healthz || echo "failed")
+          echo "Response: $HEALTH_RESPONSE"
+          
+          if echo "$HEALTH_RESPONSE" | grep -q '"status":"ok"'; then
+            echo "✅ Health check passed"
+          else
+            echo "❌ Health check failed"
+            kill $APP_PF_PID || true
+            exit 1
+          fi
+          
+          # Test root endpoint
+          echo "Testing / endpoint..."
+          ROOT_RESPONSE=$(curl -s http://localhost:8081/ || echo "failed")
+          
+          if echo "$ROOT_RESPONSE" | grep -q "Demo Flask App"; then
+            echo "✅ Root endpoint passed"
+          else
+            echo "❌ Root endpoint failed"
+            kill $APP_PF_PID || true
+            exit 1
+          fi
+          
+          # Cleanup
+          kill $APP_PF_PID || true
+          
+          echo "🎉 All tests passed!"
+
+      - name: Get ArgoCD application details
+        if: always()
+        run: |
+          echo "📊 ArgoCD Application Status:"
+          kubectl get applications -n argocd -o wide || true
+          
+          echo ""
+          echo "📊 ArgoCD Application Details:"
+          kubectl describe application demo-flask-app -n argocd || true
+
+      - name: Get pod logs on failure
+        if: failure()
+        run: |
+          echo "📋 Application pod logs:"
+          kubectl logs -n demo-app -l app=demo-flask-app --tail=100 || true
+          
+          echo ""
+          echo "📋 ArgoCD application controller logs:"
+          kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller --tail=50 || true
+
+      - name: Cleanup kind cluster
+        if: always()
+        run: |
+          echo "🧹 Cleaning up kind cluster..."
+          kind delete cluster --name ${{ env.CLUSTER_NAME }} || true
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "### 🎯 GitOps Deployment Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Cluster:** \`kind-${{ env.CLUSTER_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**GitOps Operator:** ArgoCD" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ env.DOCKER_IMAGE }}:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Namespace:** \`demo-app\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ **Status:** Deployment successful" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Status:** Deployment failed" >> $GITHUB_STEP_SUMMARY
+          fi
