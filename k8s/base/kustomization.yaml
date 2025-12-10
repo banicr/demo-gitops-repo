@@ -12,7 +12,7 @@ resources:
 images:
 - name: demo-flask-app
   newName: ghcr.io/banicr/demo-flask-app
-  newTag: latest
+  newTag: 91521d0-22
 
 # Common labels applied to all resources
 commonLabels:
