@@ -717,3 +717,4 @@ When making changes to this repository:
 ---
 
 **Questions or Issues?** Check the app-repo README or ArgoCD documentation.
+# Trigger workflow - test public image pull
