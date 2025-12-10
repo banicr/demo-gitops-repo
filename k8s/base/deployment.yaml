@@ -21,7 +21,7 @@ spec:
       - name: flask-app
         # Image reference matches kustomization.yaml - will be updated by Kustomize
         image: demo-flask-app:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 5000
           name: http
