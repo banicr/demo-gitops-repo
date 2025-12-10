@@ -5,6 +5,13 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Specific image tag to deploy (leave empty for latest)'
+        required: false
+        type: string
+  repository_dispatch:
+    types: [deploy-from-app-repo]
 
 env:
   DOCKER_IMAGE: ghcr.io/banicr/demo-flask-app
@@ -45,22 +52,46 @@ jobs:
           kubectl cluster-info --context kind-${{ env.CLUSTER_NAME }}
           kubectl get nodes
 
+      - name: Determine image tag
+        id: image_tag
+        run: |
+          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            # Use manually specified tag
+            IMAGE_TAG="${{ github.event.inputs.image_tag }}"
+            echo "Using manually specified tag: $IMAGE_TAG"
+          elif [ "${{ github.event.action }}" == "deploy-from-app-repo" ]; then
+            # Use tag from repository_dispatch event
+            IMAGE_TAG="${{ github.event.client_payload.image_tag }}"
+            echo "Using tag from app-repo: $IMAGE_TAG"
+          else
+            # Use latest tag
+            IMAGE_TAG="latest"
+            echo "Using latest tag"
+          fi
+          
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_ENV
+
       - name: Login to GHCR
         run: |
           echo "🔐 Logging into GHCR..."
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Pull latest image
+      - name: Pull image from GHCR
         run: |
-          echo "📥 Pulling latest image from app-repo..."
-          docker pull ${{ env.DOCKER_IMAGE }}:latest
-          echo "Image pulled successfully"
+          echo "📥 Pulling image: ${{ env.DOCKER_IMAGE }}:${{ steps.image_tag.outputs.image_tag }}"
+          docker pull ${{ env.DOCKER_IMAGE }}:${{ steps.image_tag.outputs.image_tag }}
+          echo "✅ Image pulled successfully"
           docker images | grep demo-flask-app
 
       - name: Load image into kind cluster
         run: |
           echo "📦 Loading image into kind cluster..."
-          kind load docker-image ${{ env.DOCKER_IMAGE }}:latest --name ${{ env.CLUSTER_NAME }}
+          kind load docker-image \
+            ${{ env.DOCKER_IMAGE }}:${{ steps.image_tag.outputs.image_tag }} \
+            --name ${{ env.CLUSTER_NAME }}
+          
+          echo "✅ Image loaded into kind"
 
       - name: Install ArgoCD
         run: |
@@ -84,23 +115,39 @@ jobs:
         run: |
           echo "⚙️ Configuring ArgoCD..."
           
-          # Get ArgoCD admin password
-          ARGOCD_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret \
-            -o jsonpath="{.data.password}" | base64 -d)
+      - name: Update manifests with image tag
+        if: steps.image_tag.outputs.image_tag != 'latest'
+        run: |
+          echo "🔧 Updating manifests with image tag: ${{ steps.image_tag.outputs.image_tag }}"
           
-          echo "ArgoCD admin password: $ARGOCD_PASSWORD"
+          cd k8s/base
           
-          # Port forward ArgoCD server in background
-          kubectl port-forward svc/argocd-server -n argocd 8080:443 > /dev/null 2>&1 &
-          ARGOCD_PF_PID=$!
-          sleep 10
+          # Update kustomization.yaml
+          sed -i "s|newTag:.*|newTag: ${{ steps.image_tag.outputs.image_tag }}|g" kustomization.yaml
           
-          # Install ArgoCD CLI
-          curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
-          sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
-          rm argocd-linux-amd64
+          # Update deployment.yaml APP_VERSION
+          sed -i "s|value:.*# APP_VERSION|value: \"${{ steps.image_tag.outputs.image_tag }}\" # APP_VERSION|g" deployment.yaml
           
-          # Login to ArgoCD
+          echo "✅ Manifests updated"
+          cat kustomization.yaml
+
+      - name: Deploy ArgoCD Application
+        run: |
+          echo "🚀 Deploying ArgoCD Application..."
+          
+          # Create demo-app namespace
+          kubectl create namespace demo-app || true
+          
+          # Apply ArgoCD Application manifest
+          kubectl apply -f argocd-application.yaml
+          
+          echo "⏳ Waiting for ArgoCD to sync application..."
+          sleep 30
+          
+          # Check application status
+          kubectl get applications -n argocd
+          
+          echo "✅ ArgoCD Application deployed"
           argocd login localhost:8080 --username admin --password "$ARGOCD_PASSWORD" --insecure
           
           echo "✅ ArgoCD configured"
@@ -190,21 +237,22 @@ jobs:
           echo "📊 ArgoCD Application Details:"
           kubectl describe application demo-flask-app -n argocd || true
 
-      - name: Get pod logs on failure
-        if: failure()
-        run: |
-          echo "📋 Application pod logs:"
-          kubectl logs -n demo-app -l app=demo-flask-app --tail=100 || true
-          
-          echo ""
-          echo "📋 ArgoCD application controller logs:"
-          kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller --tail=50 || true
-
-      - name: Cleanup kind cluster
+      - name: Deployment summary
         if: always()
         run: |
-          echo "🧹 Cleaning up kind cluster..."
-          kind delete cluster --name ${{ env.CLUSTER_NAME }} || true
+          echo "### 🎯 GitOps Deployment Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Cluster:** \`kind-${{ env.CLUSTER_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**GitOps Operator:** ArgoCD" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ env.DOCKER_IMAGE }}:${{ steps.image_tag.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Namespace:** \`demo-app\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Source:** Fetched from GHCR (app-repo published)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ **Status:** Deployment successful" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Status:** Deployment failed" >> $GITHUB_STEP_SUMMARY
+          find delete cluster --name ${{ env.CLUSTER_NAME }} || true
 
       - name: Deployment summary
         if: always()
