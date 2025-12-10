@@ -28,7 +28,7 @@ spec:
           protocol: TCP
         env:
         - name: APP_VERSION
-          value: "v1.0.0"  # Will be updated by CI pipeline
+          value: "43f8775-8"  # Will be updated by CI pipeline
         - name: APP_NAME
           value: "Demo Flask App"
         resources:
