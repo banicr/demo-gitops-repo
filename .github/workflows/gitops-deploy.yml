@@ -272,7 +272,13 @@ jobs:
             echo "✅ **Status:** Deployment successful" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ **Status:** Deployment failed" >> $GITHUB_STEP_SUMMARY
-          find delete cluster --name ${{ env.CLUSTER_NAME }} || true
+          fi
+
+      - name: Cleanup kind cluster
+        if: always()
+        run: |
+          echo "🧹 Cleaning up kind cluster..."
+          kind delete cluster --name ${{ env.CLUSTER_NAME }} || true
 
       - name: Deployment summary
         if: always()
