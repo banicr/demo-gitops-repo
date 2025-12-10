@@ -71,7 +71,6 @@ jobs:
           echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
           echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_ENV
 
-      - name: Pull image from GHCR (public)
       - name: Pull image from GHCR
         env:
           # Use PAT if available, otherwise try public pull
