@@ -168,30 +168,6 @@ jobs:
           kubectl get applications -n argocd
           
           echo "✅ ArgoCD Application deployed"
-          argocd login localhost:8080 --username admin --password "$ARGOCD_PASSWORD" --insecure
-          
-          echo "✅ ArgoCD configured"
-          
-          # Cleanup port forward
-          kill $ARGOCD_PF_PID || true
-
-      - name: Deploy ArgoCD Application
-        run: |
-          echo "🚀 Deploying ArgoCD Application..."
-          
-          # Create demo-app namespace
-          kubectl create namespace demo-app || true
-          
-          # Apply ArgoCD Application manifest
-          kubectl apply -f argocd-application.yaml
-          
-          echo "⏳ Waiting for ArgoCD to sync application..."
-          sleep 30
-          
-          # Check application status
-          kubectl get applications -n argocd
-          
-          echo "✅ ArgoCD Application deployed"
 
       - name: Wait for application deployment
         run: |
