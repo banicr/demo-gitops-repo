@@ -19,7 +19,8 @@ spec:
     spec:
       containers:
       - name: flask-app
-        image: demo-flask-app:latest  # This will be replaced by Kustomize
+        # Image reference matches kustomization.yaml - will be updated by Kustomize
+        image: demo-flask-app:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 5000
