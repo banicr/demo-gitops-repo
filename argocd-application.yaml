@@ -19,12 +19,10 @@ spec:
     
     # Helm specific configuration
     helm:
-      # Values to override from values.yaml
-      values: |
-        image:
-          tag: "8855235-29" 
-        env:
-          appVersion: "8855235-29"
+      # Use values from values.yaml in the repository
+      # Pipeline will update values.yaml with new image tags
+      valueFiles:
+        - values.yaml
   
   # Destination cluster and namespace
   destination:
