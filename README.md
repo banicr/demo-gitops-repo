@@ -40,12 +40,16 @@ This repository follows GitOps principles where:
 
 ```
 gitops-repo/
-├── k8s/
-│   └── base/                      # Base Kustomize configuration
-│       ├── namespace.yaml         # demo-app namespace definition
-│       ├── deployment.yaml        # Application Deployment
-│       ├── service.yaml           # Application Service
-│       └── kustomization.yaml     # Kustomize configuration
+├── helm/
+│   └── demo-flask-app/            # Helm chart for the application
+│       ├── Chart.yaml             # Chart metadata (version 1.0.0)
+│       ├── values.yaml            # Default configuration values
+│       └── templates/
+│           ├── deployment.yaml    # Deployment template
+│           ├── service.yaml       # Service template
+│           ├── serviceaccount.yaml # ServiceAccount template
+│           ├── _helpers.tpl       # Template helper functions
+│           └── NOTES.txt          # Post-install notes
 ├── argocd-application.yaml        # ArgoCD Application manifest
 ├── .gitignore
 └── README.md                      # This file
@@ -53,27 +57,33 @@ gitops-repo/
 
 ### Folder Structure Explained
 
-#### `k8s/base/`
+#### `helm/demo-flask-app/`
 
-Contains the base Kubernetes manifests for the application. This structure allows for future expansion with overlays for different environments.
+Contains the Helm chart for the application. Helm provides templating and packaging capabilities for Kubernetes manifests.
 
-**Current Structure (Single Environment)**:
-- `base/` - Shared base configuration
+**Current Structure**:
+- `Chart.yaml` - Chart metadata (name, version, description)
+- `values.yaml` - Default configuration values
+- `templates/` - Kubernetes manifest templates with Go templating
 
-**Future Multi-Environment Structure**:
+**Multi-Environment Support**:
+Helm supports multiple environments through:
+- Different `values.yaml` files (e.g., `values-dev.yaml`, `values-prod.yaml`)
+- Command-line overrides (`--set` flags)
+- ArgoCD Application with different `helm.values` sections
+
+**Example Multi-Environment Setup**:
 ```
-k8s/
-├── base/              # Shared base manifests
-│   ├── deployment.yaml
-│   ├── service.yaml
-│   └── kustomization.yaml
-└── overlays/          # Environment-specific overrides
-    ├── dev/
-    │   └── kustomization.yaml
-    ├── staging/
-    │   └── kustomization.yaml
-    └── production/
-        └── kustomization.yaml
+helm/demo-flask-app/
+├── Chart.yaml
+├── values.yaml              # Default/shared values
+├── values-dev.yaml          # Development overrides
+├── values-staging.yaml      # Staging overrides
+├── values-production.yaml   # Production overrides
+└── templates/
+    ├── deployment.yaml
+    ├── service.yaml
+    └── ...
 ```
 
 #### `argocd-application.yaml`
@@ -100,43 +110,46 @@ metadata:
     managed-by: argocd
 ```
 
-### Deployment (`deployment.yaml`)
+### Helm Chart (`helm/demo-flask-app/`)
 
-Defines the application Deployment with:
+#### Chart.yaml
 
-- **Replicas**: 2 (for high availability)
-- **Container Image**: Placeholder that gets updated by CI pipeline
-- **Environment Variables**:
-  - `APP_VERSION`: Application version displayed in UI
-  - `APP_NAME`: Application name
-- **Resource Limits**: Conservative limits for demo purposes
-  - Requests: 128Mi memory, 100m CPU
-  - Limits: 256Mi memory, 500m CPU
-- **Probes**:
-  - **Liveness Probe**: Checks `/healthz` endpoint
-  - **Readiness Probe**: Ensures pod is ready to receive traffic
-- **Security Context**:
-  - Runs as non-root user (UID 1000)
-  - Drops all capabilities
-  - Prevents privilege escalation
+Defines the chart metadata:
+- **Name**: demo-flask-app
+- **Version**: 1.0.0
+- **Description**: Helm chart for Demo Flask Application
+- **App Version**: Dynamically set by CI pipeline
 
-### Service (`service.yaml`)
+#### values.yaml
 
-Exposes the application within the cluster:
+Default configuration values:
+- **replicaCount**: 2 (for high availability)
+- **image**: 
+  - repository: ghcr.io/banicr/demo-flask-app
+  - tag: Updated by CI pipeline
+  - pullPolicy: IfNotPresent
+- **resources**:
+  - requests: 128Mi memory, 100m CPU
+  - limits: 256Mi memory, 500m CPU
+- **env**: Environment variables (APP_VERSION, APP_NAME)
+- **probes**: Liveness and readiness probe configuration
 
+#### templates/deployment.yaml
+
+Templated Deployment manifest with:
+- **Replicas**: `{{ .Values.replicaCount }}`
+- **Container Image**: `{{ .Values.image.repository }}:{{ .Values.image.tag }}`
+- **Environment Variables**: From `{{ .Values.env }}`
+- **Resource Limits**: From `{{ .Values.resources }}`
+- **Probes**: Checks `/healthz` endpoint
+- **Security Context**: Non-root user, dropped capabilities
+
+#### templates/service.yaml
+
+Templated Service manifest:
 - **Type**: ClusterIP (internal cluster access)
-- **Port**: 80 (external) → 5000 (container)
-- **Selector**: Routes traffic to pods with `app: demo-flask-app` label
-
-### Kustomization (`kustomization.yaml`)
-
-Kustomize configuration that:
-
-- **Resources**: Lists all manifests to include
-- **Namespace**: Ensures all resources are created in `demo-app`
-- **Images**: Defines the image name that CI will update
-- **Common Labels**: Applies standard labels to all resources
-- **Common Annotations**: Adds metadata for documentation
+- **Port**: `{{ .Values.service.port }}` (80) → `{{ .Values.service.targetPort }}` (5000)
+- **Selector**: Uses Helm template functions for label matching
 
 ## ArgoCD Configuration
 

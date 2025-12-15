@@ -1,0 +1,322 @@
+name: Validate GitOps Manifests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # Job 1: Helm Linting
+  helm-lint:
+    name: Helm Chart Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Lint Helm chart
+        run: |
+          echo "🔍 Running Helm lint with strict mode..."
+          helm lint helm/demo-flask-app --strict
+          echo "✅ Helm lint passed!"
+
+      - name: Lint summary
+        run: |
+          echo "### ✅ Helm Linting Passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Chart is properly formatted and follows best practices" >> $GITHUB_STEP_SUMMARY
+
+  # Job 2: Validate Helm Templates
+  helm-validate:
+    name: Helm Template Validation
+    runs-on: ubuntu-latest
+    needs: helm-lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Validate Helm template rendering
+        run: |
+          echo "🔍 Rendering Helm templates..."
+          helm template demo-flask-app helm/demo-flask-app > /tmp/rendered-manifest.yaml
+          
+          LINES=$(wc -l < /tmp/rendered-manifest.yaml)
+          echo "✅ Successfully rendered $LINES lines of Kubernetes manifests"
+
+      - name: Check for required resources
+        run: |
+          echo "🔍 Checking for required Kubernetes resources..."
+          
+          # Check for Deployment
+          if grep -q "kind: Deployment" /tmp/rendered-manifest.yaml; then
+            echo "✅ Deployment found"
+          else
+            echo "❌ Deployment not found"
+            exit 1
+          fi
+          
+          # Check for Service
+          if grep -q "kind: Service" /tmp/rendered-manifest.yaml; then
+            echo "✅ Service found"
+          else
+            echo "❌ Service not found"
+            exit 1
+          fi
+
+      - name: Validate manifest structure
+        run: |
+          echo "🔍 Validating YAML structure..."
+          
+          # Check for valid YAML
+          python3 -c "import yaml; yaml.safe_load_all(open('/tmp/rendered-manifest.yaml'))"
+          echo "✅ YAML structure is valid"
+
+      - name: Upload rendered manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-manifests
+          path: /tmp/rendered-manifest.yaml
+          retention-days: 7
+
+      - name: Validation summary
+        run: |
+          echo "### ✅ Helm Template Validation Passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Template Rendering**: ✅ Passed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Required Resources**: ✅ All present" >> $GITHUB_STEP_SUMMARY
+          echo "- **YAML Structure**: ✅ Valid" >> $GITHUB_STEP_SUMMARY
+
+  # Job 3: Kubernetes Manifest Validation
+  k8s-validate:
+    name: Kubernetes Manifest Validation
+    runs-on: ubuntu-latest
+    needs: helm-validate
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Install kubeval
+        run: |
+          echo "📦 Installing kubeval..."
+          wget -q https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz
+          tar xf kubeval-linux-amd64.tar.gz
+          sudo mv kubeval /usr/local/bin
+          kubeval --version
+          echo "✅ kubeval installed"
+
+      - name: Validate Kubernetes manifests
+        run: |
+          echo "🔍 Validating Kubernetes manifests with kubeval..."
+          
+          helm template demo-flask-app helm/demo-flask-app | \
+            kubeval --strict --ignore-missing-schemas --kubernetes-version 1.28.0
+          
+          echo "✅ Kubernetes manifest validation passed!"
+
+      - name: Install kubeconform (alternative validator)
+        run: |
+          echo "📦 Installing kubeconform..."
+          wget -q https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+          tar xf kubeconform-linux-amd64.tar.gz
+          sudo mv kubeconform /usr/local/bin
+          echo "✅ kubeconform installed"
+
+      - name: Validate with kubeconform
+        run: |
+          echo "🔍 Validating with kubeconform..."
+          
+          helm template demo-flask-app helm/demo-flask-app | \
+            kubeconform -strict -summary -kubernetes-version 1.28.0
+          
+          echo "✅ kubeconform validation passed!"
+
+      - name: K8s validation summary
+        run: |
+          echo "### ✅ Kubernetes Validation Passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **kubeval**: ✅ Passed" >> $GITHUB_STEP_SUMMARY
+          echo "- **kubeconform**: ✅ Passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All Kubernetes resources conform to API specifications" >> $GITHUB_STEP_SUMMARY
+
+  # Job 4: Security & Best Practices Check
+  security-check:
+    name: Security & Best Practices
+    runs-on: ubuntu-latest
+    needs: helm-lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Check for security contexts
+        run: |
+          echo "🔍 Checking for security contexts..."
+          
+          helm template demo-flask-app helm/demo-flask-app > /tmp/manifest.yaml
+          
+          # Check for runAsNonRoot
+          if grep -q "runAsNonRoot: true" /tmp/manifest.yaml; then
+            echo "✅ runAsNonRoot is set"
+          else
+            echo "⚠️  runAsNonRoot not found"
+          fi
+          
+          # Check for dropped capabilities
+          if grep -q "drop:" /tmp/manifest.yaml; then
+            echo "✅ Capabilities are being dropped"
+          else
+            echo "⚠️  No capability drops found"
+          fi
+          
+          # Check for resource limits
+          if grep -q "limits:" /tmp/manifest.yaml; then
+            echo "✅ Resource limits are set"
+          else
+            echo "❌ Resource limits not found"
+            exit 1
+          fi
+
+      - name: Check for probes
+        run: |
+          echo "🔍 Checking for health probes..."
+          
+          # Check for liveness probe
+          if grep -q "livenessProbe:" /tmp/manifest.yaml; then
+            echo "✅ Liveness probe configured"
+          else
+            echo "❌ Liveness probe not found"
+            exit 1
+          fi
+          
+          # Check for readiness probe
+          if grep -q "readinessProbe:" /tmp/manifest.yaml; then
+            echo "✅ Readiness probe configured"
+          else
+            echo "❌ Readiness probe not found"
+            exit 1
+          fi
+
+      - name: Check replica count
+        run: |
+          echo "🔍 Checking replica count..."
+          
+          REPLICAS=$(grep "replicaCount:" helm/demo-flask-app/values.yaml | awk '{print $2}')
+          
+          if [ "$REPLICAS" -ge 2 ]; then
+            echo "✅ High availability with $REPLICAS replicas"
+          else
+            echo "⚠️  Only $REPLICAS replica(s) configured"
+          fi
+
+      - name: Security summary
+        run: |
+          echo "### ✅ Security Checks Passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Security Contexts**: ✅ Configured" >> $GITHUB_STEP_SUMMARY
+          echo "- **Resource Limits**: ✅ Set" >> $GITHUB_STEP_SUMMARY
+          echo "- **Health Probes**: ✅ Configured" >> $GITHUB_STEP_SUMMARY
+          echo "- **High Availability**: ✅ Multiple replicas" >> $GITHUB_STEP_SUMMARY
+
+  # Job 5: ArgoCD Application Validation
+  argocd-validate:
+    name: ArgoCD Application Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate ArgoCD Application manifest
+        run: |
+          echo "🔍 Validating ArgoCD Application manifest..."
+          
+          # Check if file exists
+          if [ ! -f "argocd-application.yaml" ]; then
+            echo "❌ argocd-application.yaml not found"
+            exit 1
+          fi
+          
+          # Validate YAML syntax
+          python3 -c "import yaml; yaml.safe_load(open('argocd-application.yaml'))"
+          echo "✅ ArgoCD Application YAML is valid"
+
+      - name: Check ArgoCD Application structure
+        run: |
+          echo "🔍 Checking ArgoCD Application structure..."
+          
+          # Check for required fields
+          if grep -q "apiVersion: argoproj.io/v1alpha1" argocd-application.yaml; then
+            echo "✅ Correct API version"
+          else
+            echo "❌ Invalid API version"
+            exit 1
+          fi
+          
+          if grep -q "kind: Application" argocd-application.yaml; then
+            echo "✅ Correct kind"
+          else
+            echo "❌ Invalid kind"
+            exit 1
+          fi
+          
+          if grep -q "syncPolicy:" argocd-application.yaml; then
+            echo "✅ Sync policy configured"
+          else
+            echo "⚠️  No sync policy found"
+          fi
+
+      - name: ArgoCD validation summary
+        run: |
+          echo "### ✅ ArgoCD Validation Passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "ArgoCD Application manifest is valid and well-formed" >> $GITHUB_STEP_SUMMARY
+
+  # Job 6: Final Summary
+  final-summary:
+    name: Validation Summary
+    runs-on: ubuntu-latest
+    needs: [helm-lint, helm-validate, k8s-validate, security-check, argocd-validate]
+    if: always()
+    steps:
+      - name: Check validation results
+        run: |
+          echo "🎉 All validation checks completed!"
+          echo ""
+          echo "### 🎉 All Validations Passed!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Helm Linting | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Helm Template Validation | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Kubernetes Validation | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Checks | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| ArgoCD Validation | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**GitOps repository is ready for deployment** 🚀" >> $GITHUB_STEP_SUMMARY

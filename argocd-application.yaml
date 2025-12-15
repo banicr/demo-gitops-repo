@@ -15,7 +15,16 @@ spec:
     # GitOps repository URL
     repoURL: https://github.com/banicr/demo-gitops-repo.git
     targetRevision: main
-    path: k8s/base
+    path: helm/demo-flask-app
+    
+    # Helm specific configuration
+    helm:
+      # Values to override from values.yaml
+      values: |
+        image:
+          tag: "ff796fc-23"
+        env:
+          appVersion: "ff796fc-23"
   
   # Destination cluster and namespace
   destination:
