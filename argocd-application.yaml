@@ -22,9 +22,9 @@ spec:
       # Values to override from values.yaml
       values: |
         image:
-          tag: "f9a34a2-28" 
+          tag: "8855235-29" 
         env:
-          appVersion: "f9a34a2-28"
+          appVersion: "8855235-29"
   
   # Destination cluster and namespace
   destination:
