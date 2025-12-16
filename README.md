@@ -2,13 +2,37 @@
 
 This repository contains the Kubernetes manifests and GitOps configuration for the Demo Flask App. It serves as the single source of truth for the deployed application state and is monitored by ArgoCD for automatic synchronization.
 
+## 📚 Documentation
+
+This repository contains comprehensive documentation for the complete CI/CD + GitOps platform:
+
+### Quick Access Guides
+
+- **[QUICK_START.md](docs/QUICK_START.md)** - 5-minute setup guide to get started
+- **[SETUP_GUIDE.md](docs/SETUP_GUIDE.md)** - Detailed setup instructions
+- **[DEVOPS_ARCHITECTURE_GUIDE.md](docs/DEVOPS_ARCHITECTURE_GUIDE.md)** - Complete architecture and implementation guide
+- **[PROJECT_RECREATION_GUIDE.md](docs/PROJECT_RECREATION_GUIDE.md)** - Step-by-step guide with AI prompts to recreate this entire setup
+- **[PROJECT_README.md](docs/PROJECT_README.md)** - Overall project architecture and workflow
+
+### Quick Start
+
+```bash
+# Clone repositories
+git clone https://github.com/banicr/demo-app-repo.git app-repo
+git clone https://github.com/banicr/demo-gitops-repo.git gitops-repo
+
+# Run automated setup
+cd app-repo
+./scripts/setup-local-cluster.sh
+```
+
 ## Overview
 
 This repository follows GitOps principles where:
 
 - **Git is the source of truth** for application deployment state
 - **All changes are declarative** using Kubernetes manifests
-- **ArgoCD automatically syncs** changes to the cluster
+- **ArgoCD automatically syncs** changes to the cluster (every 3 minutes)
 - **CI pipeline updates** this repo when new versions are built
 - **Deployment history is auditable** through Git commits
 
