@@ -8,7 +8,7 @@ image:
   repository: ghcr.io/banicr/demo-flask-app
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
-  tag: "9bbb2bc-4"
+  tag: "b944374-5"
 
 imagePullSecrets: []
 nameOverride: ""
@@ -93,4 +93,4 @@ affinity: {}
 # Application-specific environment variables
 env:
   appName: "Demo Flask App"
-  appVersion: "9bbb2bc-4"
+  appVersion: "b944374-5"
